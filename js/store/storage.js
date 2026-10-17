@@ -18,6 +18,10 @@ function defaultData() {
       matchesWon: 0, // CPUのチップを全部取った回数
     },
     collection: {}, // 役カテゴリ番号 -> { count, firstAt }
+    progress: {
+      lessons: {}, // 章ID -> { done: true, quizBest: 正解数, quizTotal }
+      drills: {}, // ドリルID -> { plays, best, lastScore }
+    },
     settings: {},
   };
 }
@@ -31,6 +35,10 @@ function migrate(data) {
     version: VERSION,
     stats: { ...base.stats, ...(data.stats || {}) },
     collection: { ...(data.collection || {}) },
+    progress: {
+      lessons: { ...((data.progress && data.progress.lessons) || {}) },
+      drills: { ...((data.progress && data.progress.drills) || {}) },
+    },
     settings: { ...base.settings, ...(data.settings || {}) },
   };
 }

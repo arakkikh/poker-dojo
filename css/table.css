@@ -614,3 +614,112 @@
 .result-hands.many .cards {
   --card-w: 30px;
 }
+
+/* ---------- ヒント ---------- */
+.hint {
+  margin: 0 10px 6px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(242, 193, 78, 0.12);
+  border: 1px solid rgba(242, 193, 78, 0.35);
+  font-size: 13px;
+  min-height: 74px;
+}
+
+.hint-wait {
+  color: var(--text-dim);
+  text-align: center;
+  padding-top: 18px;
+}
+
+.hint-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.hint-top b {
+  color: var(--gold);
+  font-size: 16px;
+}
+
+.hint-top .rec {
+  margin-left: auto;
+}
+
+.hint-reason {
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.hint-note {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.action-row .btn.recommended {
+  box-shadow: 0 0 0 3px var(--gold), 0 0 14px rgba(242, 193, 78, 0.8);
+}
+
+/* 振り返り */
+.review {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.review h4 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.review h4 span {
+  font-size: 12px;
+  color: var(--gold);
+}
+
+.rv-row {
+  border-left: 4px solid var(--win);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+}
+
+.rv-row.ok {
+  border-color: var(--gold);
+}
+
+.rv-row.bad {
+  border-color: var(--lose);
+}
+
+.rv-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.rv-body small {
+  color: var(--text-dim);
+}
+
+.rv-reason {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.rv-tip {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--gold);
+}

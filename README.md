@@ -27,7 +27,9 @@ Node.js があれば Node.js で、無ければ macOS 標準の JavaScriptCore �
 
 ```
 js/core/   ルール・役判定・勝率計算（DOM非依存・テスト対象）
-js/ai/     CPUの思考、スターティングハンド評価
+js/ai/     CPUの思考、スターティングハンド評価、初心者向けアドバイス
+js/content/ レッスン本文、ドリル問題の自動生成
+js/workers/ 勝率計算の Web Worker
 js/ui/     画面
 js/store/  localStorage への保存
 tests/     テスト
@@ -37,5 +39,5 @@ tests/     テスト
 
 - [x] フェーズ① 基本ルールで1対1対戦
 - [x] フェーズ② 複数人＋CPU強化
-- [ ] フェーズ③ レッスン・ドリル・ヒント付き対戦
+- [x] フェーズ③ レッスン・ドリル・ヒント付き対戦
 - [ ] フェーズ④ トーナメント・ミッション・成績図鑑

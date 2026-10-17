@@ -3,6 +3,8 @@
 import { mountHome } from './ui/home.js';
 import { mountSetup } from './ui/setup.js';
 import { mountTable } from './ui/table.js';
+import { mountLesson } from './ui/lesson.js';
+import { mountDrill } from './ui/drill.js';
 
 let current = document.getElementById('app');
 let unmount = null;
@@ -10,6 +12,9 @@ let unmount = null;
 const SCREENS = {
   home: mountHome,
   cash: mountSetup,
+  hint: (el, ctx) => mountSetup(el, { ...ctx, mode: 'hint' }),
+  lesson: mountLesson,
+  drill: mountDrill,
   table: mountTable,
 };
 

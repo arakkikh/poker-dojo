@@ -5,6 +5,9 @@ import { evaluateHand, CATEGORY_NAMES } from '../core/evaluator.js';
 import { decide } from '../ai/cpu.js';
 import { createCpu, PERSONALITIES, LEVELS } from '../ai/personalities.js';
 import { createMemory, observeHand } from '../ai/memory.js';
+import { preflopAdvice, postflopAdvice, judge } from '../ai/advisor.js';
+import { potOdds } from '../core/equity.js';
+import { computeEquity } from './equityClient.js';
 import { handLabelJa, handTier } from '../ai/preflop.js';
 import { cardHTML, backHTML, emptyHTML } from './cards.js';
 import { sleep, fmt, escapeHTML, toast, showSheet } from './util.js';
@@ -18,7 +21,7 @@ const ME_SEAT = { x: 50, y: 80, cls: 'me' };
 const SEAT_LAYOUTS = {
   2: [ME_SEAT, { x: 50, y: 17, cls: 'top' }],
   3: [ME_SEAT, { x: 20, y: 24, cls: 'left' }, { x: 80, y: 24, cls: 'right' }],
-  4: [ME_SEAT, { x: 14, y: 48, cls: 'left' }, { x: 50, y: 12, cls: 'top' }, { x: 86, y: 48, cls: 'right' }],
+  4: [ME_SEAT, { x: 14, y: 33, cls: 'left' }, { x: 50, y: 11, cls: 'top' }, { x: 86, y: 33, cls: 'right' }],
   5: [ME_SEAT, { x: 14, y: 66, cls: 'left' }, { x: 21, y: 22, cls: 'left' }, { x: 79, y: 22, cls: 'right' }, { x: 86, y: 66, cls: 'right' }],
   6: [
     ME_SEAT,
@@ -31,6 +34,9 @@ const SEAT_LAYOUTS = {
 };
 
 const SPEEDS = { slow: 1.6, normal: 1, fast: 0.45 };
+const pct = (x) => `${Math.round(x * 100)}%`;
+const ACTION_JA = { fold: 'フォールド', check: 'チェック', call: 'コール', raise: 'レイズ', bet: 'ベット', allin: 'オールイン' };
+const MARK_ICON = { good: '✅', ok: '🔸', bad: '⚠️' };
 const LEVEL_IDS = Object.keys(LEVELS);
 
 const BOARD_STREET = { 0: 'preflop', 3: 'flop', 4: 'turn', 5: 'river' };
@@ -93,6 +99,7 @@ class TableController {
           <div class="seats"></div>
         </section>
         <div class="my-info"></div>
+        ${config.hints ? '<div class="hint"></div>' : ''}
         <div class="actions"></div>
       </div>`;
     this.el = {
@@ -103,6 +110,7 @@ class TableController {
       seats: app.querySelector('.seats'),
       felt: app.querySelector('.felt'),
       myInfo: app.querySelector('.my-info'),
+      hint: app.querySelector('.hint'),
       actions: app.querySelector('.actions'),
     };
     app.querySelector('.back').addEventListener('click', () => {
@@ -210,6 +218,9 @@ class TableController {
     this.awarded = false;
     this.showdown = null;
     this.bubbles = {};
+    this.decisions = [];
+    this.advice = null;
+    if (this.el.hint) this.el.hint.innerHTML = '<div class="hint-wait">💡 あなたの番になるとヒントが出ます</div>';
     this.el.handNo.textContent = `ハンド #${this.table.handCount}`;
     this.render();
     await this.playEvents();
@@ -429,14 +440,136 @@ class TableController {
 
   askHuman() {
     return new Promise((resolve) => {
+      const legal = this.hand.legalActions();
       this.pendingResolve = (action) => {
         this.pendingResolve = null;
         this.raiseMode = false;
+        if (action) this.recordDecision(action, legal);
         resolve(action);
       };
       this.render();
       this.renderActionBar();
+      if (this.config.hints) this.updateHint();
     });
+  }
+
+  // ---------------- ヒント ----------------
+
+  /** おすすめの行動を、今の状況で押せるボタンの表記にする */
+  adviceLabel(advice, legal) {
+    let a = advice.action;
+    if ((a === 'raise' || a === 'bet') && !legal.canRaise) a = legal.canCheck ? 'check' : 'call';
+    if (a === 'raise' || a === 'bet') {
+      const word = legal.isBet ? 'ベット' : 'レイズ';
+      return advice.amount ? `${word}（${fmt(advice.amount)}くらい）` : word;
+    }
+    return ACTION_JA[a];
+  }
+
+  async updateHint() {
+    const hand = this.hand;
+    const token = (this.hintToken = {});
+    const view = hand.viewFor(ME);
+    const { legal } = view;
+    const opponents = view.opponents.length;
+    this.advice = null;
+    this.el.hint.innerHTML = '<div class="hint-wait">💡 勝率を計算中…</div>';
+    const { equity } = await computeEquity({ hole: view.hole, board: view.board, opponents, iterations: 4000 });
+    if (token !== this.hintToken || !this.alive || !this.pendingResolve) return;
+
+    const bb = hand.bigBlind;
+    let advice;
+    let amount = null;
+    if (view.street === 'preflop') {
+      const raised = legal.currentBet > bb;
+      advice = preflopAdvice({
+        hole: view.hole,
+        position: view.position,
+        numPlayers: hand.n,
+        toCallBB: legal.toCall / bb,
+        raised,
+        canCheck: legal.canCheck,
+      });
+      if (advice.action === 'raise') amount = raised ? legal.currentBet * 3 : bb * (3 + view.limpers);
+    } else {
+      advice = postflopAdvice({
+        equity,
+        toCall: legal.toCall,
+        pot: legal.pot,
+        opponents,
+        street: view.street,
+        hole: view.hole,
+        board: view.board,
+        streetRaises: view.streetRaises,
+      });
+      if (advice.action === 'bet') amount = legal.pot * advice.size;
+      if (advice.action === 'raise') amount = legal.currentBet + (legal.pot + legal.toCall) * 0.8;
+    }
+    if (amount != null) {
+      const step = hand.smallBlind;
+      amount = Math.max(legal.minRaiseTo, Math.min(legal.maxRaiseTo, Math.round(amount / step) * step));
+    }
+    // プリフロップはまだ全員が行動していないので、ポットオッズは表示しない
+    const need = legal.toCall > 0 && view.street !== 'preflop' ? potOdds(legal.toCall, legal.pot) : 0;
+    this.advice = { ...advice, amount, equity, need, street: view.street };
+
+    this.el.hint.innerHTML = `
+      <div class="hint-top">
+        <span>勝率 <b>${pct(equity)}</b></span>
+        ${need ? `<span>必要 <b>${pct(need)}</b></span>` : ''}
+        <span class="rec">おすすめ <b>${this.adviceLabel(this.advice, legal)}</b></span>
+      </div>
+      <div class="hint-reason">${advice.reason}</div>
+      <div class="hint-note">※勝率は、相手${opponents}人の手札がランダムだと仮定した値</div>`;
+    this.markRecommended();
+  }
+
+  /** おすすめのボタンを光らせる */
+  markRecommended() {
+    if (!this.advice || !this.pendingResolve) return;
+    const legal = this.hand.legalActions();
+    let a = this.advice.action;
+    if ((a === 'raise' || a === 'bet') && !legal.canRaise) a = legal.canCheck ? 'check' : 'call';
+    const act = { fold: 'fold', check: 'check', call: 'call', raise: 'raise-open', bet: 'raise-open' }[a];
+    const btn = this.el.actions.querySelector(`[data-act="${act}"]`);
+    if (btn) btn.classList.add('recommended');
+  }
+
+  recordDecision(action, legal) {
+    if (!this.config.hints || !this.advice) return;
+    // オールインが「足りない額でのコール」ならコール扱い
+    const type = action.type === 'allin' && !legal.canRaise ? 'call' : action.type;
+    this.decisions.push({
+      street: this.advice.street,
+      actual: type === 'raise' && legal.isBet ? 'bet' : type,
+      advice: this.advice,
+      label: this.adviceLabel(this.advice, legal),
+      verdict: judge(type, this.advice, this.advice.street),
+    });
+    this.advice = null;
+    this.hintToken = null;
+    this.el.hint.innerHTML = '<div class="hint-wait">💡 あなたの番になるとヒントが出ます</div>';
+  }
+
+  reviewHTML(net) {
+    if (!this.config.hints || !this.decisions.length) return '';
+    const good = this.decisions.filter((d) => d.verdict.mark === 'good').length;
+    const bad = this.decisions.filter((d) => d.verdict.mark === 'bad').length;
+    let tip = '';
+    if (bad === 0 && net < 0) tip = '判断は良かったので、今回負けたのは運です。良い判断を続ければ、長い目で見て勝てます。';
+    else if (bad > 0 && net > 0) tip = '今回は勝てましたが、⚠️の判断は繰り返すと長い目で見て損をします。';
+    else if (bad === 0) tip = 'すべて良い判断でした！この調子です。';
+    const rows = this.decisions
+      .map(
+        (d) => `<div class="rv-row ${d.verdict.mark}">
+          <div class="rv-head"><span>${STREET_NAMES[d.street]}</span><span>${MARK_ICON[d.verdict.mark]} ${d.verdict.text}</span></div>
+          <div class="rv-body">あなた: <b>${ACTION_JA[d.actual]}</b>　おすすめ: <b>${d.label}</b><br>
+            <small>勝率 ${pct(d.advice.equity)}${d.advice.need ? `／必要な勝率 ${pct(d.advice.need)}` : ''}</small></div>
+          ${d.verdict.mark !== 'good' ? `<div class="rv-reason">${d.advice.reason}</div>` : ''}
+        </div>`,
+      )
+      .join('');
+    return `<div class="review"><h4>📝 振り返り <span>${good} / ${this.decisions.length} 良い判断</span></h4>${rows}${tip ? `<p class="rv-tip">${tip}</p>` : ''}</div>`;
   }
 
   renderActionBar() {
@@ -445,6 +578,7 @@ class TableController {
       this.renderRaisePanel(legal);
       return;
     }
+    queueMicrotask(() => this.markRecommended());
     const callLabel = legal.canCheck
       ? 'チェック'
       : legal.toCall >= legal.stack
@@ -537,7 +671,8 @@ class TableController {
         break;
       case 'raise-open':
         this.raiseMode = true;
-        this.raiseAmount = legal.isBet ? this.presetAmount(legal, 'half') : legal.minRaiseTo;
+        this.raiseAmount =
+          this.advice && this.advice.amount ? this.advice.amount : legal.isBet ? this.presetAmount(legal, 'half') : legal.minRaiseTo;
         this.renderActionBar();
         break;
       case 'raise-cancel':
@@ -626,9 +761,10 @@ class TableController {
 
     // 同じ役同士ならキッカー（役以外のカード）で決着したことを伝える
     if (this.showdown && !sharedWithMe) {
-      const evs = this.showdown.hands.map((h) => h.eval);
-      const top = Math.max(...evs.map((e) => e.category));
-      if (evs.filter((e) => e.category === top).length >= 2 && mainWinners.length === 1) {
+      // 役の説明（例:「Aのワンペア」）まで同じなら、残りのカードで決まったということ
+      const winnerDesc = pots[0].description;
+      const sameDesc = this.showdown.hands.filter((h) => h.eval.description === winnerDesc).length;
+      if (sameDesc >= 2 && mainWinners.length === 1) {
         sub += '<br>同じ役どうしなので、残りのカード（キッカー）の強さで決着しました';
       }
     }
@@ -662,6 +798,7 @@ class TableController {
       `<p class="result-title ${cls}">${title}</p>
        <p class="result-sub">${sub}</p>
        ${potLines}
+       ${this.reviewHTML(net)}
        ${hands}
        <button class="btn btn-primary" data-value="next">次のハンドへ</button>`,
       { container: this.app },

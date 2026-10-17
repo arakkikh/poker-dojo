@@ -7,6 +7,7 @@ import './evaluator.test.js';
 import './game.test.js';
 import './equity.test.js';
 import './cpu.test.js';
+import './content.test.js';
 
 const log = globalThis.__testLog || globalThis.print || ((s) => console.log(s));
 const ok = await run(log);

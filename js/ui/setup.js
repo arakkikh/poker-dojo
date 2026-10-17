@@ -19,10 +19,20 @@ const SPEED_OPTIONS = [
   { id: 'fast', label: 'はやい' },
 ];
 
-export function mountSetup(app, { navigate }) {
-  const saved = load().settings.cash || {};
+const MODES = {
+  cash: { title: '🎰 通常対戦', defaultPlayers: 6, note: '' },
+  hint: {
+    title: '💡 ヒント付き対戦',
+    defaultPlayers: 4,
+    note: 'あなたの番になると、勝率とおすすめのアクション・理由が表示されます。ハンドが終わると、あなたの判断を振り返れます。',
+  },
+};
+
+export function mountSetup(app, { navigate, mode = 'cash' }) {
+  const M = MODES[mode];
+  const saved = load().settings[mode] || {};
   const state = {
-    numPlayers: saved.numPlayers || 6,
+    numPlayers: saved.numPlayers || M.defaultPlayers,
     level: saved.level || 'beginner',
     speed: saved.speed || 'normal',
   };
@@ -32,8 +42,9 @@ export function mountSetup(app, { navigate }) {
       <div class="setup">
         <div class="setup-head">
           <button class="back-btn" data-act="back" aria-label="戻る">‹</button>
-          <h2>🎰 通常対戦</h2>
+          <h2>${M.title}</h2>
         </div>
+        ${M.note ? `<p class="page-note">${M.note}</p>` : ''}
 
         <section class="setup-section">
           <h3>人数（あなたを含む）</h3>
@@ -97,10 +108,10 @@ export function mountSetup(app, { navigate }) {
     } else if (btn.dataset.act === 'start') {
       app.removeEventListener('click', onClick);
       update((d) => {
-        d.settings.cash = { ...state };
+        d.settings[mode] = { ...state };
       });
       navigate('table', {
-        config: { ...state, startingStack: STARTING_STACK, smallBlind: SMALL_BLIND, bigBlind: BIG_BLIND },
+        config: { ...state, hints: mode === 'hint', startingStack: STARTING_STACK, smallBlind: SMALL_BLIND, bigBlind: BIG_BLIND },
       });
     }
   });
