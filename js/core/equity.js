@@ -11,9 +11,10 @@ import { scoreHand } from './evaluator.js';
  * @param {number} [o.iterations]
  * @param {() => number} [o.rng]
  * @param {number[]} [o.dead] 既に見えていて使われないカード
+ * @param {(((c1:number, c2:number) => boolean) | null)[]} [o.ranges] 相手ごとの「持っていそうな手」の判定。null ならランダム
  * @returns {{win:number, tie:number, lose:number, equity:number}} いずれも 0〜1
  */
-export function estimateEquity({ hole, board = [], opponents = 1, iterations = 1000, rng = Math.random, dead = [] }) {
+export function estimateEquity({ hole, board = [], opponents = 1, iterations = 1000, rng = Math.random, dead = [], ranges = null }) {
   const known = new Set([...hole, ...board, ...dead]);
   const rest = fullDeck().filter((c) => !known.has(c));
   const boardNeed = 5 - board.length;
@@ -47,6 +48,7 @@ export function estimateEquity({ hole, board = [], opponents = 1, iterations = 1
     const myScore = scoreHand(mine);
     let best = -1;
     let tiedCount = 0;
+    if (ranges) drawRangedHands(rest, boardNeed, opponents, ranges, rng);
     for (let o = 0; o < opponents; o++) {
       theirs[0] = rest[boardNeed + o * 2];
       theirs[1] = rest[boardNeed + o * 2 + 1];
@@ -70,6 +72,33 @@ export function estimateEquity({ hole, board = [], opponents = 1, iterations = 1
     lose: (iterations - win - tie) / iterations,
     equity: equity / iterations,
   };
+}
+
+const MAX_TRIES = 25;
+
+/**
+ * 相手の手札をレンジに合うように選び直す（棄却サンプリング）。
+ * rest[boardNeed + o*2], rest[boardNeed + o*2 + 1] に o番目の相手の手札を置く。
+ */
+function drawRangedHands(rest, boardNeed, opponents, ranges, rng) {
+  for (let o = 0; o < opponents; o++) {
+    const accept = ranges[o];
+    const i = boardNeed + o * 2;
+    if (!accept) continue;
+    const span = rest.length - i;
+    for (let t = 0; t < MAX_TRIES; t++) {
+      if (accept(rest[i], rest[i + 1])) break;
+      // 未使用のカードから2枚選び直す
+      const a = i + Math.floor(rng() * span);
+      let tmp = rest[i];
+      rest[i] = rest[a];
+      rest[a] = tmp;
+      const b = i + 1 + Math.floor(rng() * (span - 1));
+      tmp = rest[i + 1];
+      rest[i + 1] = rest[b];
+      rest[b] = tmp;
+    }
+  }
 }
 
 /** ポットオッズ: コールに必要な勝率（0〜1） */

@@ -237,7 +237,15 @@ export class Hand {
     if (p.allIn && type !== 'fold') label = 'allin';
     p.actedAtBet = this.currentBet;
     p.lastAction = label;
-    this.emit({ type: 'action', playerId: p.id, action: label, amount: added, to: p.bet, street: this.street });
+    this.emit({
+      type: 'action',
+      playerId: p.id,
+      action: label,
+      amount: added,
+      to: p.bet,
+      street: this.street,
+      isRaise: type === 'raise', // ベット/レイズ（オールインのレイズを含む）
+    });
 
     const alive = this.players.filter((q) => !q.folded);
     if (alive.length === 1) {
@@ -376,6 +384,20 @@ export class Hand {
   /** 指定プレイヤーから見えるゲーム状況（CPU思考・ヒント用。他人の手札は含めない） */
   viewFor(playerId) {
     const me = this.playerById(playerId);
+    const actions = this.events.filter((e) => e.type === 'action');
+    const pre = actions.filter((e) => e.street === 'preflop');
+    const preflopAction = {};
+    let preflopAggressor = null;
+    let limpers = 0;
+    let preflopRaises = 0;
+    for (const e of pre) {
+      if (e.isRaise) {
+        preflopAggressor = e.playerId;
+        preflopRaises++;
+      } else if (e.action === 'call' && preflopRaises === 0) limpers++;
+      preflopAction[e.playerId] = e.isRaise ? 'raise' : e.action === 'allin' ? 'call' : e.action;
+    }
+    const streetRaises = actions.filter((e) => e.street === this.street && e.isRaise).length;
     return {
       street: this.street,
       hole: [...me.hole],
@@ -383,12 +405,25 @@ export class Hand {
       pot: this.pot,
       stack: me.stack,
       bigBlind: this.bigBlind,
+      smallBlind: this.smallBlind,
       legal: this.toAct >= 0 && this.currentPlayer.id === playerId ? this.legalActions() : null,
       opponents: this.players
         .filter((p) => p.id !== playerId && !p.folded)
-        .map((p) => ({ id: p.id, stack: p.stack, bet: p.bet, allIn: p.allIn, lastAction: p.lastAction })),
+        .map((p) => ({
+          id: p.id,
+          stack: p.stack,
+          bet: p.bet,
+          allIn: p.allIn,
+          lastAction: p.lastAction,
+          preflopAction: preflopAction[p.id] || null,
+          position: this.positionOf(p.id),
+        })),
+      numPlayers: this.n,
       isButton: this.players[this.buttonIndex].id === playerId,
       position: this.positionOf(playerId),
+      preflopAggressor,
+      limpers,
+      streetRaises,
     };
   }
 

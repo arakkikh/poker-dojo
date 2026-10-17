@@ -337,4 +337,132 @@ button:disabled {
   z-index: 60;
   animation: fade-in 0.2s;
   max-width: 90%;
+  white-space: pre-line;
+  text-align: center;
+}
+
+/* ---------- 設定画面 ---------- */
+.setup {
+  flex: 1;
+  padding: calc(var(--safe-top) + 10px) 16px calc(var(--safe-bottom) + 20px);
+  background: radial-gradient(ellipse at top, var(--felt-light), var(--felt-dark) 70%);
+}
+
+.setup-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.setup-head h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.back-btn {
+  width: 40px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 20px;
+}
+
+.setup-section {
+  margin-bottom: 18px;
+}
+
+.setup-section h3 {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+}
+
+.segmented button,
+.option-card {
+  background: var(--panel);
+  border: 2px solid transparent;
+  border-radius: 12px;
+  min-height: 48px;
+  font-weight: 700;
+}
+
+.segmented button small {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.segmented button.selected,
+.option-card.selected {
+  border-color: var(--gold);
+  background: rgba(242, 193, 78, 0.18);
+}
+
+.options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.option-card {
+  text-align: left;
+  padding: 10px 12px;
+}
+
+.option-card small {
+  display: block;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.type-list {
+  display: grid;
+  gap: 6px;
+}
+
+.type-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.type-item .av {
+  font-size: 24px;
+}
+
+.type-item b {
+  color: var(--text);
+  font-size: 14px;
+  display: block;
+}
+
+.setup-note {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 4px 0 12px;
+}
+
+.setup .btn-primary {
+  width: 100%;
+  min-height: 56px;
+  font-size: 18px;
 }

@@ -4,11 +4,10 @@ import { load, resetAll } from '../store/storage.js';
 import { fmt } from './util.js';
 
 const MENU = [
-  { id: 'headsup', icon: '🃏', title: '1対1で対戦', sub: 'CPU（初級）とサシで勝負', ready: true, featured: true },
   { id: 'lesson', icon: '📘', title: '入門レッスン', sub: '役・流れ・ポジションを基礎から', ready: false },
   { id: 'drill', icon: '🎯', title: '練習ドリル', sub: 'クイズで判断力をきたえる', ready: false },
   { id: 'hint', icon: '💡', title: 'ヒント付き対戦', sub: '勝率とおすすめアクションを表示', ready: false },
-  { id: 'cash', icon: '🎰', title: '通常対戦', sub: '最大6人・CPUの強さを選べる', ready: false },
+  { id: 'cash', icon: '🎰', title: '通常対戦', sub: '2〜6人・CPUの強さと性格いろいろ', ready: true, featured: true },
   { id: 'tournament', icon: '🏆', title: 'トーナメント', sub: 'ブラインドが上がっていく勝ち抜き戦', ready: false },
   { id: 'mission', icon: '⭐', title: 'ミッション', sub: '目標をクリアして報酬ゲット', ready: false },
   { id: 'stats', icon: '📊', title: '成績・図鑑', sub: '統計と達成した役のコレクション', ready: false },

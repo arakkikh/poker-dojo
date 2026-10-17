@@ -3,20 +3,35 @@
 import { Table, STREET_NAMES } from '../core/game.js';
 import { evaluateHand, CATEGORY_NAMES } from '../core/evaluator.js';
 import { decide } from '../ai/cpu.js';
+import { createCpu, PERSONALITIES, LEVELS } from '../ai/personalities.js';
+import { createMemory, observeHand } from '../ai/memory.js';
 import { handLabelJa, handTier } from '../ai/preflop.js';
 import { cardHTML, backHTML, emptyHTML } from './cards.js';
 import { sleep, fmt, escapeHTML, toast, showSheet } from './util.js';
-import { recordHand, update } from '../store/storage.js';
+import { recordHand } from '../store/storage.js';
 
 const ME = 'you';
 
 // 席の配置（%）。0番目は常に自分（画面下）
+// cls: 席の向き（ベット額やバッジの表示位置に使う）
+const ME_SEAT = { x: 50, y: 80, cls: 'me' };
 const SEAT_LAYOUTS = {
-  2: [
-    { x: 50, y: 80, cls: 'me' },
-    { x: 50, y: 17, cls: 'top' },
+  2: [ME_SEAT, { x: 50, y: 17, cls: 'top' }],
+  3: [ME_SEAT, { x: 20, y: 24, cls: 'left' }, { x: 80, y: 24, cls: 'right' }],
+  4: [ME_SEAT, { x: 14, y: 48, cls: 'left' }, { x: 50, y: 12, cls: 'top' }, { x: 86, y: 48, cls: 'right' }],
+  5: [ME_SEAT, { x: 14, y: 66, cls: 'left' }, { x: 21, y: 22, cls: 'left' }, { x: 79, y: 22, cls: 'right' }, { x: 86, y: 66, cls: 'right' }],
+  6: [
+    ME_SEAT,
+    { x: 14, y: 67, cls: 'left' },
+    { x: 14, y: 32, cls: 'left' },
+    { x: 50, y: 11, cls: 'top' },
+    { x: 86, y: 32, cls: 'right' },
+    { x: 86, y: 67, cls: 'right' },
   ],
 };
+
+const SPEEDS = { slow: 1.6, normal: 1, fast: 0.45 };
+const LEVEL_IDS = Object.keys(LEVELS);
 
 const BOARD_STREET = { 0: 'preflop', 3: 'flop', 4: 'turn', 5: 'river' };
 
@@ -56,10 +71,8 @@ class TableController {
     this.pendingResolve = null;
     this.raiseMode = false;
     this.raiseAmount = 0;
-    this.meta = {
-      [ME]: { name: 'あなた', avatar: '🙂' },
-      ...Object.fromEntries(config.cpus.map((c) => [c.id, c])),
-    };
+    this.speed = SPEEDS[config.speed] || 1;
+    this.meta = { [ME]: { name: 'あなた', avatar: '🙂' } };
 
     app.innerHTML = `
       <div class="table-screen">
@@ -88,6 +101,7 @@ class TableController {
       board: app.querySelector('.board'),
       street: app.querySelector('.street-label'),
       seats: app.querySelector('.seats'),
+      felt: app.querySelector('.felt'),
       myInfo: app.querySelector('.my-info'),
       actions: app.querySelector('.actions'),
     };
@@ -95,6 +109,10 @@ class TableController {
       if (confirm('対戦をやめてホームに戻りますか？')) this.navigate('home');
     });
     this.el.actions.addEventListener('click', (e) => this.onActionClick(e));
+    this.el.seats.addEventListener('click', (e) => {
+      const seat = e.target.closest('[data-player]');
+      if (seat) this.showPlayerInfo(seat.dataset.player);
+    });
     this.el.actions.addEventListener('input', (e) => {
       if (e.target.matches('input[type=range]')) {
         this.raiseAmount = Number(e.target.value);
@@ -104,8 +122,20 @@ class TableController {
     this.newTable();
   }
 
+  /** 新しいCPUを作る（強さ「ミックス」なら毎回ランダム） */
+  makeCpu() {
+    const { level } = this.config;
+    const lv = level === 'mixed' ? LEVEL_IDS[Math.floor(Math.random() * LEVEL_IDS.length)] : level;
+    const usedNames = Object.values(this.meta).map((m) => m.name);
+    const cpu = createCpu({ level: lv, usedNames });
+    this.meta[cpu.id] = cpu;
+    return cpu;
+  }
+
   newTable() {
-    const { startingStack, smallBlind, bigBlind, cpus } = this.config;
+    const { startingStack, smallBlind, bigBlind, numPlayers } = this.config;
+    this.memory = createMemory();
+    const cpus = Array.from({ length: numPlayers - 1 }, () => this.makeCpu());
     this.table = new Table({
       players: [
         { id: ME, name: 'あなた', stack: startingStack },
@@ -116,13 +146,31 @@ class TableController {
     });
   }
 
+  /** チップがなくなったCPUは席を立ち、新しいCPUが座る */
+  replaceBustedCpus() {
+    this.table.players.forEach((tp, seat) => {
+      if (tp.id === ME || tp.stack > 0) return;
+      const cpu = this.makeCpu();
+      this.table.players[seat] = { id: cpu.id, name: cpu.name, stack: this.config.startingStack };
+      toast(`${cpu.avatar} ${cpu.name}（${cpu.style}）が席に着きました`, 2600);
+    });
+  }
+
+  showPlayerInfo(id) {
+    const m = this.meta[id];
+    if (!m || id === ME) return;
+    const p = PERSONALITIES[m.personality];
+    const l = LEVELS[m.level];
+    toast(`${m.avatar} ${m.name}：${p.label}・${l.label}\n${p.desc}`, 3500);
+  }
+
   destroy() {
     this.alive = false;
     if (this.pendingResolve) this.pendingResolve(null);
   }
 
   async wait(ms) {
-    await sleep(ms);
+    await sleep(ms * this.speed);
     if (!this.alive) throw new Cancelled();
   }
 
@@ -130,17 +178,18 @@ class TableController {
     try {
       while (this.alive) {
         const hand = this.table.startHand();
-        if (!hand) {
-          const again = await this.gameOver();
-          if (!this.alive) return;
-          if (again) {
-            this.newTable();
-            continue;
-          }
-          this.navigate('home');
-          return;
-        }
         await this.playHand(hand);
+        const me = this.table.players.find((p) => p.id === ME);
+        if (me.stack <= 0) {
+          const again = await this.bustSheet();
+          if (!this.alive) return;
+          if (!again) {
+            this.navigate('home');
+            return;
+          }
+          me.stack = this.config.startingStack;
+        }
+        this.replaceBustedCpus();
       }
     } catch (e) {
       if (e instanceof Cancelled) return;
@@ -173,7 +222,8 @@ class TableController {
       } else {
         this.render();
         await this.wait(600 + Math.random() * 600);
-        action = decide(hand.viewFor(p.id));
+        const m = this.meta[p.id];
+        action = decide(hand.viewFor(p.id), { level: m.level, personality: m.personality, memory: this.memory });
       }
       if (!this.alive) throw new Cancelled();
       hand.act(action);
@@ -181,6 +231,7 @@ class TableController {
     }
 
     this.table.settleHand();
+    observeHand(this.memory, hand);
     const summary = this.record();
     await this.showResult(summary);
   }
@@ -250,6 +301,7 @@ class TableController {
     const hand = this.hand;
     if (!hand) return;
     const layout = SEAT_LAYOUTS[this.table.players.length];
+    this.el.felt.classList.toggle('multi', this.table.players.length > 2);
 
     // ボードとポット
     const board = hand.board.slice(0, this.shownBoard);
@@ -287,6 +339,7 @@ class TableController {
     const meta = this.meta[tp.id];
     const isMe = tp.id === ME;
     const style = `left:${pos.x}%;top:${pos.y}%`;
+    const compact = !isMe && this.table.players.length > 2 ? 'compact' : '';
     if (!p) {
       return `<div class="seat ${pos.cls} folded" style="${style}"><div class="seat-cards"></div>
         <div class="seat-plate"><span class="name">${meta.avatar} ${escapeHTML(meta.name)}</span><span class="stack">0</span></div></div>`;
@@ -313,14 +366,14 @@ class TableController {
     const betChip = p.bet > 0 && !this.awarded ? `<span class="bet-chip">${fmt(p.bet)}</span>` : '';
 
     return `
-      <div class="seat ${pos.cls} ${isMe ? 'me' : ''} ${active ? 'active' : ''} ${p.folded ? 'folded' : ''}" style="${style}">
+      <div class="seat ${pos.cls} ${compact} ${active ? 'active' : ''} ${p.folded ? 'folded' : ''}" style="${style}" data-player="${p.id}">
         ${bubble ? `<div class="bubble ${bubble.cls}">${bubble.text}</div>` : ''}
         <div class="seat-cards">${cards}</div>
         ${nameLine}
         <div class="seat-plate">
           ${badge}
           <span class="name">${meta.avatar} ${escapeHTML(meta.name)}</span>
-          ${meta.style ? `<span class="style">${escapeHTML(meta.style)}</span>` : ''}
+          ${meta.style && !compact ? `<span class="style">${escapeHTML(meta.style)}</span>` : ''}
           <span class="stack">${fmt(stack)}</span>
         </div>
         ${betChip}
@@ -537,8 +590,11 @@ class TableController {
     if (!summary) return;
     const hand = this.hand;
     const { net, won, me } = summary;
-    const winners = hand.results.pots.flatMap((p) => p.winners);
-    const split = won > 0 && winners.some((id) => id !== ME) && winners.includes(ME);
+    const { pots } = hand.results;
+    const nameOf = (id) => `${this.meta[id].avatar} ${escapeHTML(this.meta[id].name)}`;
+    const signed = (n) => `${n >= 0 ? '+' : ''}${fmt(n)}`;
+    const sharedWithMe = pots.some((p) => p.winners.includes(ME) && p.winners.length > 1);
+    const mainWinners = pots[0].winners;
 
     let title;
     let cls;
@@ -547,49 +603,65 @@ class TableController {
       title = 'フォールド';
       cls = 'lose';
       sub = net < 0 ? `${fmt(-net)} チップを失いました` : 'チップは減っていません';
+      sub += `<br>勝者: ${mainWinners.map(nameOf).join('・')}${pots[0].description ? `（${pots[0].description}）` : ''}`;
     } else if (hand.results.uncontested) {
       title = '勝ち！';
       cls = 'win';
-      const other = hand.players.find((p) => p.id !== ME);
-      sub = `${escapeHTML(this.meta[other.id].name)}がフォールドしました（${net >= 0 ? '+' : ''}${fmt(net)}）`;
-    } else if (split) {
+      sub = `${hand.n === 2 ? '相手が' : '他の全員が'}フォールドしました（${signed(net)}）`;
+    } else if (won > 0 && sharedWithMe) {
       title = '引き分け';
       cls = '';
-      sub = `同じ強さの役でポットを分けました（${net >= 0 ? '+' : ''}${fmt(net)}）`;
+      sub = `同じ強さの役でポットを分けました（${signed(net)}）`;
     } else if (won > 0) {
       title = '勝ち！';
       cls = 'win';
-      sub = `${hand.results.pots[0].description}で勝利（+${fmt(net)}）`;
+      const myPot = pots.find((p) => p.winners.includes(ME));
+      sub = `${myPot.description}で勝利（${signed(net)}）`;
+      if (pots.some((p) => !p.winners.includes(ME))) sub += '<br>ただし一部のサイドポットは他の人が獲得';
     } else {
       title = '負け…';
       cls = 'lose';
-      const pot = hand.results.pots[0];
-      sub = `相手の${pot.description}に負けました（${fmt(net)}）`;
+      sub = `${mainWinners.map(nameOf).join('・')}の${pots[0].description}に負けました（${signed(net)}）`;
     }
 
     // 同じ役同士ならキッカー（役以外のカード）で決着したことを伝える
-    if (this.showdown && !split && this.showdown.hands.length === 2) {
-      const [a, b] = this.showdown.hands.map((h) => h.eval);
-      if (a.category === b.category) sub += '<br>同じ役なので、残りのカード（キッカー）の強さで決着しました';
+    if (this.showdown && !sharedWithMe) {
+      const evs = this.showdown.hands.map((h) => h.eval);
+      const top = Math.max(...evs.map((e) => e.category));
+      if (evs.filter((e) => e.category === top).length >= 2 && mainWinners.length === 1) {
+        sub += '<br>同じ役どうしなので、残りのカード（キッカー）の強さで決着しました';
+      }
+    }
+
+    let potLines = '';
+    if (pots.length > 1) {
+      potLines = `<div class="pot-lines">${pots
+        .map(
+          (p, i) => `<div><span>${i === 0 ? 'メインポット' : `サイドポット${pots.length > 2 ? i : ''}`} ${fmt(p.amount)}</span>
+            <span>→ ${p.winners.map(nameOf).join('・')}</span></div>`,
+        )
+        .join('')}</div>`;
     }
 
     let hands = '';
     if (this.showdown) {
-      hands = `<div class="result-hands">${this.showdown.hands
-        .map((h) => {
-          const m = this.meta[h.playerId];
-          return `<div class="result-hand ${winners.includes(h.playerId) ? 'winner' : ''}">
-            <div class="who">${m.avatar} ${escapeHTML(m.name)}</div>
+      const winners = new Set(pots.flatMap((p) => p.winners));
+      const many = this.showdown.hands.length > 3 ? 'many' : '';
+      hands = `<div class="result-hands ${many}">${this.showdown.hands
+        .map(
+          (h) => `<div class="result-hand ${winners.has(h.playerId) ? 'winner' : ''}">
+            <div class="who">${nameOf(h.playerId)}</div>
             <div class="desc">${h.eval.description}</div>
             <div class="cards">${h.eval.best.map((c) => cardHTML(c)).join('')}</div>
-          </div>`;
-        })
+          </div>`,
+        )
         .join('')}</div>`;
     }
 
     await showSheet(
       `<p class="result-title ${cls}">${title}</p>
        <p class="result-sub">${sub}</p>
+       ${potLines}
        ${hands}
        <button class="btn btn-primary" data-value="next">次のハンドへ</button>`,
       { container: this.app },
@@ -597,20 +669,13 @@ class TableController {
     if (!this.alive) throw new Cancelled();
   }
 
-  async gameOver() {
-    const me = this.table.players.find((p) => p.id === ME);
-    const iWon = me.stack > 0;
-    if (iWon) update((d) => d.stats.matchesWon++);
+  /** 自分のチップがなくなったとき。true なら補充して続ける */
+  async bustSheet() {
     const v = await showSheet(
-      iWon
-        ? `<p class="result-title win">🎉 完全勝利！</p>
-           <p class="result-sub">相手のチップをすべて獲得しました（${this.table.handCount}ハンド）</p>
-           <button class="btn btn-primary" data-value="again">もう一度対戦</button>
-           <button class="btn" data-value="home">ホームへ</button>`
-        : `<p class="result-title lose">チップがなくなりました</p>
-           <p class="result-sub">次はきっと勝てる！チップを補充してもう一度挑戦できます</p>
-           <button class="btn btn-primary" data-value="again">チップを補充して再挑戦</button>
-           <button class="btn" data-value="home">ホームへ</button>`,
+      `<p class="result-title lose">チップがなくなりました</p>
+       <p class="result-sub">次はきっと勝てる！チップを ${fmt(this.config.startingStack)} 補充して続けられます</p>
+       <button class="btn btn-primary" data-value="again">チップを補充して続ける</button>
+       <button class="btn" data-value="home">ホームへ</button>`,
       { container: this.app },
     );
     return v === 'again';

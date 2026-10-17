@@ -503,3 +503,114 @@
 .sheet .btn + .btn {
   margin-top: 8px;
 }
+
+/* ---------- 複数人テーブル ---------- */
+.felt.multi .board {
+  --card-w: min(12.5vw, 52px);
+}
+
+.felt.multi .oval {
+  inset: 6% 3% 12%;
+  border-radius: 44% / 30%;
+}
+
+.seat.compact {
+  width: 96px;
+  gap: 2px;
+}
+
+.seat.compact .seat-cards {
+  --card-w: 30px;
+  min-height: 42px;
+}
+
+.seat.compact .seat-plate {
+  min-width: 84px;
+  padding: 3px 6px;
+  border-radius: 10px;
+}
+
+.seat.compact .seat-plate .name {
+  font-size: 11px;
+}
+
+.seat.compact .seat-plate .stack {
+  font-size: 13px;
+}
+
+.seat.compact .pos-badge {
+  top: -9px;
+  left: auto;
+  right: -9px;
+  transform: none;
+  min-width: 22px;
+  height: 20px;
+  font-size: 10px;
+}
+
+.seat.compact .hand-name {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.seat.compact .bubble {
+  top: -20px;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.seat.left .bet-chip,
+.seat.right .bet-chip {
+  top: auto;
+  bottom: -24px;
+}
+
+.seat.left .bet-chip {
+  left: 70%;
+}
+
+.seat.right .bet-chip {
+  left: 30%;
+}
+
+.seat.top .bet-chip {
+  top: auto;
+  bottom: -24px;
+}
+
+.seat[data-player]:not(.me) .seat-plate {
+  cursor: pointer;
+}
+
+/* 結果シート（複数人） */
+.sheet {
+  max-height: 88dvh;
+  overflow-y: auto;
+}
+
+.pot-lines {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.pot-lines div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.result-hands.many {
+  gap: 6px;
+}
+
+.result-hands.many .result-hand {
+  padding: 6px 8px;
+}
+
+.result-hands.many .cards {
+  --card-w: 30px;
+}
