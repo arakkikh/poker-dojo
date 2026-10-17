@@ -8,13 +8,14 @@ const MENU = [
   { id: 'drill', icon: '🎯', title: '練習ドリル', sub: 'クイズで判断力をきたえる', ready: true },
   { id: 'hint', icon: '💡', title: 'ヒント付き対戦', sub: '勝率とおすすめアクションを表示', ready: true },
   { id: 'cash', icon: '🎰', title: '通常対戦', sub: '2〜6人・CPUの強さと性格いろいろ', ready: true },
-  { id: 'tournament', icon: '🏆', title: 'トーナメント', sub: 'ブラインドが上がっていく勝ち抜き戦', ready: false },
-  { id: 'mission', icon: '⭐', title: 'ミッション', sub: '目標をクリアして報酬ゲット', ready: false },
-  { id: 'stats', icon: '📊', title: '成績・図鑑', sub: '統計と達成した役のコレクション', ready: false },
+  { id: 'tournament', icon: '🏆', title: 'トーナメント', sub: 'ブラインドが上がっていく勝ち抜き戦', ready: true },
+  { id: 'mission', icon: '⭐', title: 'ミッション', sub: '目標をクリアしてコインをゲット', ready: true },
+  { id: 'stats', icon: '📊', title: '成績・図鑑', sub: '統計と達成した役のコレクション', ready: true },
 ];
 
 export function mountHome(app, { navigate }) {
-  const { stats } = load();
+  const { stats, profile, progress } = load();
+  const unclaimed = Object.values(progress.missions).filter((m) => !m.claimed).length;
   const winRate = stats.hands ? Math.round((stats.handsWon / stats.hands) * 100) + '%' : '-';
 
   app.innerHTML = `
@@ -22,6 +23,7 @@ export function mountHome(app, { navigate }) {
       <div class="home-suits">♠<span class="r">♥</span>♣<span class="r">♦</span></div>
       <h1 class="home-title">ポーカー道場</h1>
       <p class="home-sub">テキサスホールデムを基礎から学ぼう</p>
+      <div class="home-coins"><span class="coin-pill">🪙 ${fmt(profile.coins)} コイン</span>${unclaimed ? `<span class="badge-new">受け取れる報酬 ${unclaimed}</span>` : ''}</div>
       <div class="stats-strip">
         <div class="stat"><b>${fmt(stats.hands)}</b><span>プレイしたハンド</span></div>
         <div class="stat"><b>${winRate}</b><span>ポット獲得率</span></div>
@@ -38,7 +40,7 @@ export function mountHome(app, { navigate }) {
         ).join('')}
       </nav>
       <div class="home-footer">
-        <button class="link-btn" data-action="reset">成績をリセット</button>
+        <button class="link-btn" data-action="reset">データをリセット</button>
       </div>
     </div>`;
 
@@ -47,7 +49,7 @@ export function mountHome(app, { navigate }) {
     if (item && !item.disabled) navigate(item.dataset.id);
   });
   app.querySelector('[data-action="reset"]').addEventListener('click', () => {
-    if (confirm('成績と図鑑をすべてリセットします。よろしいですか？')) {
+    if (confirm('成績・図鑑・レッスンの進み具合・ミッション・コインをすべてリセットします。元に戻せません。よろしいですか？')) {
       resetAll();
       mountHome(app, { navigate });
     }

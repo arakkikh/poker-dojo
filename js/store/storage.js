@@ -1,5 +1,7 @@
 // 成績・進行状況の保存（localStorage）
 
+import { MISSIONS, CARD_BACKS } from '../content/missions.js';
+
 const KEY = 'poker-dojo';
 const VERSION = 1;
 
@@ -16,11 +18,20 @@ function defaultData() {
       biggestPot: 0,
       totalNet: 0,
       matchesWon: 0, // CPUのチップを全部取った回数
+      tournaments: 0,
+      tournamentWins: 0,
+      bestPlace: null,
+    },
+    profile: {
+      coins: 0,
+      cardBacks: ['red'], // 持っているカードの裏デザイン
+      cardBack: 'red',
     },
     collection: {}, // 役カテゴリ番号 -> { count, firstAt }
     progress: {
       lessons: {}, // 章ID -> { done: true, quizBest: 正解数, quizTotal }
       drills: {}, // ドリルID -> { plays, best, lastScore }
+      missions: {}, // ミッションID -> { at: 達成日時, claimed: 報酬を受け取ったか }
     },
     settings: {},
   };
@@ -34,10 +45,12 @@ function migrate(data) {
     ...data,
     version: VERSION,
     stats: { ...base.stats, ...(data.stats || {}) },
+    profile: { ...base.profile, ...(data.profile || {}) },
     collection: { ...(data.collection || {}) },
     progress: {
       lessons: { ...((data.progress && data.progress.lessons) || {}) },
       drills: { ...((data.progress && data.progress.drills) || {}) },
+      missions: { ...((data.progress && data.progress.missions) || {}) },
     },
     settings: { ...base.settings, ...(data.settings || {}) },
   };
@@ -102,4 +115,80 @@ export function recordHand({ net, won, vpip, pfr, showdown, showdownWon, potWon,
     }
   });
   return { newCategory };
+}
+
+// ---------------- ミッション・コイン ----------------
+
+/**
+ * 出来事 ctx でミッションを判定し、新しく達成したものを返す
+ * @returns {typeof MISSIONS}
+ */
+export function checkMissions(ctx) {
+  const data = load();
+  const done = MISSIONS.filter((m) => !data.progress.missions[m.id] && safeCheck(m, ctx, data));
+  if (done.length) {
+    update((d) => {
+      for (const m of done) d.progress.missions[m.id] = { at: new Date().toISOString(), claimed: false };
+    });
+  }
+  return done;
+}
+
+function safeCheck(m, ctx, data) {
+  try {
+    return !!m.check(ctx, data);
+  } catch {
+    return false;
+  }
+}
+
+/** 達成済みミッションの報酬を受け取る */
+export function claimMission(id) {
+  const m = MISSIONS.find((x) => x.id === id);
+  let got = 0;
+  update((d) => {
+    const st = d.progress.missions[id];
+    if (!m || !st || st.claimed) return;
+    st.claimed = true;
+    d.profile.coins += m.reward;
+    got = m.reward;
+  });
+  return got;
+}
+
+export function addCoins(n) {
+  update((d) => {
+    d.profile.coins += n;
+  });
+}
+
+/** カードの裏デザインを買う（コイン不足なら false） */
+export function buyCardBack(id) {
+  const item = CARD_BACKS.find((c) => c.id === id);
+  let ok = false;
+  update((d) => {
+    if (!item || d.profile.cardBacks.includes(id) || d.profile.coins < item.price) return;
+    d.profile.coins -= item.price;
+    d.profile.cardBacks.push(id);
+    d.profile.cardBack = id;
+    ok = true;
+  });
+  return ok;
+}
+
+export function setCardBack(id) {
+  update((d) => {
+    if (d.profile.cardBacks.includes(id)) d.profile.cardBack = id;
+  });
+}
+
+/** トーナメントの結果を記録して、賞品のコインを渡す */
+export function recordTournament(place, prize) {
+  update((d) => {
+    const s = d.stats;
+    s.tournaments++;
+    if (place === 1) s.tournamentWins++;
+    s.bestPlace = s.bestPlace == null ? place : Math.min(s.bestPlace, place);
+    d.profile.coins += prize;
+  });
 }

@@ -723,3 +723,12 @@
   font-size: 13px;
   color: var(--gold);
 }
+
+.blind-info small {
+  font-size: 11px;
+  margin-left: 2px;
+}
+
+.seat.busted {
+  opacity: 0.45;
+}

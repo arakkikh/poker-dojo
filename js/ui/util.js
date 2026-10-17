@@ -7,11 +7,22 @@ export function escapeHTML(s) {
 }
 
 export function toast(message, ms = 2400) {
+  let box = document.querySelector('.toasts');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'toasts';
+    document.body.appendChild(box);
+  }
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = message;
-  document.body.appendChild(el);
+  box.appendChild(el);
   setTimeout(() => el.remove(), ms);
+}
+
+/** ミッション達成のお知らせ */
+export function notifyMissions(missions) {
+  for (const m of missions) toast(`⭐ ミッション達成！${m.icon}「${m.title}」\n報酬 ${m.reward} コインはミッション画面で受け取れます`, 4000);
 }
 
 /** 下から出るシートを表示し、ボタンが押されたらその value で resolve */

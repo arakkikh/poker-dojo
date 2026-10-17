@@ -3,6 +3,7 @@
 import { load, update } from '../store/storage.js';
 import { PERSONALITIES, LEVELS } from '../ai/personalities.js';
 import { fmt } from './util.js';
+import { TOURNAMENT_SPEEDS, TOURNAMENT_STACK } from '../core/tournament.js';
 
 const STARTING_STACK = 2000;
 const SMALL_BLIND = 10;
@@ -21,6 +22,11 @@ const SPEED_OPTIONS = [
 
 const MODES = {
   cash: { title: '🎰 通常対戦', defaultPlayers: 6, note: '' },
+  tournament: {
+    title: '🏆 トーナメント',
+    defaultPlayers: 6,
+    note: '全員が同じチップで始め、チップがなくなったら脱落。ブラインドがだんだん上がっていきます。最後の1人になれば優勝！',
+  },
   hint: {
     title: '💡 ヒント付き対戦',
     defaultPlayers: 4,
@@ -35,7 +41,10 @@ export function mountSetup(app, { navigate, mode = 'cash' }) {
     numPlayers: saved.numPlayers || M.defaultPlayers,
     level: saved.level || 'beginner',
     speed: saved.speed || 'normal',
+    blindSpeed: saved.blindSpeed || 'normal',
   };
+  const isTournament = mode === 'tournament';
+  const stack = isTournament ? TOURNAMENT_STACK : STARTING_STACK;
 
   const render = () => {
     app.innerHTML = `
@@ -68,6 +77,22 @@ export function mountSetup(app, { navigate, mode = 'cash' }) {
           </div>
         </section>
 
+        ${
+          isTournament
+            ? `<section class="setup-section">
+          <h3>ブラインドの上がり方</h3>
+          <div class="segmented" data-group="blindSpeed">
+            ${Object.entries(TOURNAMENT_SPEEDS)
+              .map(
+                ([id, o]) =>
+                  `<button class="${state.blindSpeed === id ? 'selected' : ''}" data-value="${id}">${o.label}<small>${o.handsPerLevel}ハンドごと</small></button>`,
+              )
+              .join('')}
+          </div>
+        </section>`
+            : ''
+        }
+
         <section class="setup-section">
           <h3>進行スピード</h3>
           <div class="segmented" data-group="speed">
@@ -86,7 +111,11 @@ export function mountSetup(app, { navigate, mode = 'cash' }) {
           </div>
         </section>
 
-        <p class="setup-note">持ちチップ ${fmt(STARTING_STACK)}・ブラインド ${SMALL_BLIND}/${BIG_BLIND}<br>チップがなくなっても補充して続けられます</p>
+        <p class="setup-note">${
+          isTournament
+            ? `持ちチップ ${fmt(stack)}・ブラインド ${SMALL_BLIND}/${BIG_BLIND} から開始<br>上位に入るとコインがもらえます（優勝 300）`
+            : `持ちチップ ${fmt(stack)}・ブラインド ${SMALL_BLIND}/${BIG_BLIND}<br>チップがなくなっても補充して続けられます`
+        }</p>
         <button class="btn btn-primary" data-act="start">対戦スタート</button>
       </div>`;
   };
@@ -111,7 +140,7 @@ export function mountSetup(app, { navigate, mode = 'cash' }) {
         d.settings[mode] = { ...state };
       });
       navigate('table', {
-        config: { ...state, hints: mode === 'hint', startingStack: STARTING_STACK, smallBlind: SMALL_BLIND, bigBlind: BIG_BLIND },
+        config: { ...state, mode, hints: mode === 'hint', startingStack: stack, smallBlind: SMALL_BLIND, bigBlind: BIG_BLIND },
       });
     }
   });

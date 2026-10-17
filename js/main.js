@@ -5,6 +5,9 @@ import { mountSetup } from './ui/setup.js';
 import { mountTable } from './ui/table.js';
 import { mountLesson } from './ui/lesson.js';
 import { mountDrill } from './ui/drill.js';
+import { mountMissions } from './ui/missions.js';
+import { mountStats } from './ui/stats.js';
+import { applyCardBack } from './ui/theme.js';
 
 let current = document.getElementById('app');
 let unmount = null;
@@ -13,8 +16,11 @@ const SCREENS = {
   home: mountHome,
   cash: mountSetup,
   hint: (el, ctx) => mountSetup(el, { ...ctx, mode: 'hint' }),
+  tournament: (el, ctx) => mountSetup(el, { ...ctx, mode: 'tournament' }),
   lesson: mountLesson,
   drill: mountDrill,
+  mission: mountMissions,
+  stats: mountStats,
   table: mountTable,
 };
 
@@ -30,4 +36,10 @@ function navigate(name, params = {}) {
   unmount = mount(fresh, { navigate, ...params }) || null;
 }
 
+applyCardBack();
 navigate('home');
+
+// オフラインでも遊べるように（https または localhost のときだけ）
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}

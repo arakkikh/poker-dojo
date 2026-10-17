@@ -1,0 +1,17 @@
+{
+  "name": "ポーカー道場",
+  "short_name": "ポーカー道場",
+  "description": "テキサスホールデムを基礎から学べる学習＆対戦ゲーム",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d3b2a",
+  "theme_color": "#0d3b2a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

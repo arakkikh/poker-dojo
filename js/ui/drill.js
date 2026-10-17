@@ -1,9 +1,9 @@
 // 練習ドリル画面
 
 import { DRILLS, QUESTIONS_PER_DRILL } from '../content/drills.js';
-import { load, update } from '../store/storage.js';
+import { load, update, checkMissions } from '../store/storage.js';
 import { cardHTML } from './cards.js';
-import { escapeHTML } from './util.js';
+import { escapeHTML, notifyMissions } from './util.js';
 
 function message(score, total) {
   const r = score / total;
@@ -90,6 +90,7 @@ export function mountDrill(app, { navigate }) {
       d.progress.drills[drill.id] = p;
       best = p.best;
     });
+    notifyMissions(checkMissions({ type: 'drill', id: drill.id, score: view.score, total: QUESTIONS_PER_DRILL }));
     app.innerHTML = `
       <div class="page lesson">
         ${header(`${drill.icon} ${drill.title}`, 'menu')}

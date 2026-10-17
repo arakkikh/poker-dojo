@@ -2,9 +2,9 @@
 
 import { LESSONS, HAND_RANKING } from '../content/lessons.js';
 import { parseCards } from '../core/cards.js';
-import { load, update } from '../store/storage.js';
+import { load, update, checkMissions } from '../store/storage.js';
 import { cardHTML } from './cards.js';
-import { escapeHTML } from './util.js';
+import { escapeHTML, notifyMissions } from './util.js';
 
 const cardsRow = (str, label) =>
   `<div class="card-row">${label ? `<span class="row-label">${label}</span>` : ''}<div class="cards">${parseCards(str).map((c) => cardHTML(c)).join('')}</div></div>`;
@@ -110,6 +110,7 @@ export function mountLesson(app, { navigate }) {
         quizTotal: total,
       };
     });
+    notifyMissions(checkMissions({ type: 'lesson', id: lesson.id }));
     app.innerHTML = `
       <div class="page lesson">
         ${header(`第${view.chapter + 1}章 クリア`, 'list')}

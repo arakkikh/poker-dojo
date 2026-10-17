@@ -10,8 +10,10 @@ import { potOdds } from '../core/equity.js';
 import { computeEquity } from './equityClient.js';
 import { handLabelJa, handTier } from '../ai/preflop.js';
 import { cardHTML, backHTML, emptyHTML } from './cards.js';
-import { sleep, fmt, escapeHTML, toast, showSheet } from './util.js';
-import { recordHand } from '../store/storage.js';
+import { sleep, fmt, escapeHTML, toast, showSheet, notifyMissions } from './util.js';
+import { recordHand, checkMissions, recordTournament } from '../store/storage.js';
+import { buildHandSummary } from '../content/missions.js';
+import { BLIND_LEVELS, TOURNAMENT_SPEEDS, levelIndexForHand, handsUntilNextLevel, placeEliminated, prizeFor } from '../core/tournament.js';
 
 const ME = 'you';
 
@@ -78,6 +80,8 @@ class TableController {
     this.raiseMode = false;
     this.raiseAmount = 0;
     this.speed = SPEEDS[config.speed] || 1;
+    this.isTournament = config.mode === 'tournament';
+    this.handsPerLevel = (TOURNAMENT_SPEEDS[config.blindSpeed] || TOURNAMENT_SPEEDS.normal).handsPerLevel;
     this.meta = { [ME]: { name: 'あなた', avatar: '🙂' } };
 
     app.innerHTML = `
@@ -85,7 +89,7 @@ class TableController {
         <header class="tbar">
           <button class="back" aria-label="ホームへ戻る">‹</button>
           <div class="info">
-            <span>ブラインド <b>${fmt(config.smallBlind)}/${fmt(config.bigBlind)}</b></span>
+            <span class="blind-info">ブラインド <b>${fmt(config.smallBlind)}/${fmt(config.bigBlind)}</b></span>
             <span class="hand-no"></span>
           </div>
         </header>
@@ -104,6 +108,7 @@ class TableController {
       </div>`;
     this.el = {
       handNo: app.querySelector('.hand-no'),
+      blindInfo: app.querySelector('.blind-info'),
       pot: app.querySelector('.pot'),
       board: app.querySelector('.board'),
       street: app.querySelector('.street-label'),
@@ -114,7 +119,8 @@ class TableController {
       actions: app.querySelector('.actions'),
     };
     app.querySelector('.back').addEventListener('click', () => {
-      if (confirm('対戦をやめてホームに戻りますか？')) this.navigate('home');
+      const msg = this.isTournament ? 'トーナメントを棄権してホームに戻りますか？' : '対戦をやめてホームに戻りますか？';
+      if (confirm(msg)) this.navigate('home');
     });
     this.el.actions.addEventListener('click', (e) => this.onActionClick(e));
     this.el.seats.addEventListener('click', (e) => {
@@ -143,6 +149,9 @@ class TableController {
   newTable() {
     const { startingStack, smallBlind, bigBlind, numPlayers } = this.config;
     this.memory = createMemory();
+    this.session = { hands: 0, vpip: 0, net: 0 };
+    this.places = {}; // トーナメントの順位（脱落した人）
+    this.levelIndex = -1;
     const cpus = Array.from({ length: numPlayers - 1 }, () => this.makeCpu());
     this.table = new Table({
       players: [
@@ -184,6 +193,10 @@ class TableController {
 
   async run() {
     try {
+      if (this.isTournament) {
+        await this.runTournament();
+        return;
+      }
       while (this.alive) {
         const hand = this.table.startHand();
         await this.playHand(hand);
@@ -204,6 +217,70 @@ class TableController {
       console.error(e);
       toast('エラーが発生しました: ' + e.message, 5000);
     }
+  }
+
+  // ---------------- トーナメント ----------------
+
+  /** 次のハンドのブラインドを設定し、ヘッダーを更新する */
+  applyBlindLevel() {
+    const n = this.table.handCount + 1;
+    const idx = levelIndexForHand(n, this.handsPerLevel);
+    const lv = BLIND_LEVELS[idx];
+    if (idx !== this.levelIndex) {
+      if (this.levelIndex >= 0) {
+        toast(`⬆️ ブラインドが上がりました！\nレベル${idx + 1}: ${fmt(lv.sb)}/${fmt(lv.bb)}${lv.ante ? `（アンティ ${fmt(lv.ante)}）` : ''}`, 3000);
+      }
+      this.levelIndex = idx;
+      this.table.smallBlind = lv.sb;
+      this.table.bigBlind = lv.bb;
+      this.table.ante = lv.ante;
+    }
+    const left = handsUntilNextLevel(n, this.handsPerLevel);
+    this.el.blindInfo.innerHTML = `Lv${idx + 1} <b>${fmt(lv.sb)}/${fmt(lv.bb)}</b>${lv.ante ? ` A${fmt(lv.ante)}` : ''}${left ? `<small>（あと${left}ハンド）</small>` : ''}`;
+  }
+
+  async runTournament() {
+    const total = this.table.players.length;
+    while (this.alive) {
+      this.applyBlindLevel();
+      const remainingBefore = this.table.activePlayers().length;
+      const hand = this.table.startHand();
+      await this.playHand(hand);
+      for (const { id, place } of placeEliminated(hand.players, remainingBefore)) {
+        this.places[id] = place;
+        if (id !== ME) toast(`${this.meta[id].avatar} ${this.meta[id].name}が脱落（${place}位）`, 2600);
+      }
+      const myPlace = this.places[ME];
+      const alive = this.table.activePlayers();
+      if (myPlace || alive.length === 1) {
+        const place = myPlace || 1;
+        if (!this.alive) return;
+        const again = await this.tournamentResult(place, total);
+        if (!this.alive) return;
+        if (again) {
+          this.newTable();
+          continue;
+        }
+        this.navigate('home');
+        return;
+      }
+    }
+  }
+
+  async tournamentResult(place, total) {
+    const prize = prizeFor(place, total);
+    recordTournament(place, prize);
+    notifyMissions(checkMissions({ type: 'tournament', place, players: total }));
+    const win = place === 1;
+    const v = await showSheet(
+      `<p class="result-title ${win ? 'win' : place <= 3 ? '' : 'lose'}">${win ? '🏆 優勝！' : `${place}位`}</p>
+       <p class="result-sub">${win ? `${total}人の中で最後まで勝ち残りました！` : `${total}人中 ${place}位でトーナメントを終えました`}<br>
+         報酬 <b>${prize}</b> コイン（${this.table.handCount}ハンド）</p>
+       <button class="btn btn-primary" data-value="again">もう一度トーナメント</button>
+       <button class="btn" data-value="home">ホームへ</button>`,
+      { container: this.app },
+    );
+    return v === 'again';
   }
 
   // ---------------- 1ハンドの進行 ----------------
@@ -352,8 +429,9 @@ class TableController {
     const style = `left:${pos.x}%;top:${pos.y}%`;
     const compact = !isMe && this.table.players.length > 2 ? 'compact' : '';
     if (!p) {
-      return `<div class="seat ${pos.cls} folded" style="${style}"><div class="seat-cards"></div>
-        <div class="seat-plate"><span class="name">${meta.avatar} ${escapeHTML(meta.name)}</span><span class="stack">0</span></div></div>`;
+      const place = this.places && this.places[tp.id];
+      return `<div class="seat ${pos.cls} ${compact} folded busted" style="${style}"><div class="seat-cards"></div>
+        <div class="seat-plate"><span class="name">${meta.avatar} ${escapeHTML(meta.name)}</span><span class="stack">${place ? `${place}位で脱落` : '脱落'}</span></div></div>`;
     }
     const active = !hand.isComplete && hand.currentPlayer && hand.currentPlayer.id === p.id;
     const faceUp = isMe || (this.revealed && !p.folded);
@@ -718,6 +796,17 @@ class TableController {
       category,
     });
     if (newCategory != null) toast(`📖 図鑑に「${CATEGORY_NAMES[newCategory]}」が登録されました！`, 3000);
+
+    // ミッション判定
+    this.session.hands++;
+    if (pre.some((e) => ['call', 'bet', 'raise', 'allin'].includes(e.action))) this.session.vpip++;
+    this.session.net += net;
+    const summary = buildHandSummary(hand, ME, {
+      levelOf: (id) => (this.meta[id] ? this.meta[id].level : null),
+      decisions: this.decisions,
+      session: { ...this.session },
+    });
+    notifyMissions(checkMissions({ type: 'hand', summary }));
     return { net, won, me };
   }
 
