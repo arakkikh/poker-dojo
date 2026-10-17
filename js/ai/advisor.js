@@ -42,7 +42,14 @@ export function preflopAdvice({ hole, position, numPlayers, toCallBB, raised, ca
     return { action: canCheck ? 'check' : 'fold', reason: `レイズに対抗するには${label}では弱い。誰かがレイズしたら参加の基準を上げよう` };
   }
   if (s >= threshold) {
-    return { action: 'raise', reason: `${where}で${label}なら十分強い。コールではなくレイズで参加しよう` };
+    // 5段階の評価と言葉をそろえる（「まあまあ」の手を「強い」と言わない）
+    const why =
+      tier.tier === 1
+        ? 'とても強い手'
+        : tier.tier === 2
+          ? '強い手'
+          : 'まあまあの手だが、この席と人数なら参加する価値がある';
+    return { action: 'raise', reason: `${where}で${label}は${why}。コールではなくレイズで参加しよう` };
   }
   if (canCheck) return { action: 'check', reason: `${label}。追加のチップなしでフロップを見られるのでチェック` };
   if (position === 'SB' && s >= Math.max(4, threshold - 1) && toCallBB <= 0.5) {

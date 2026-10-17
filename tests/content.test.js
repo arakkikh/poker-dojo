@@ -88,3 +88,14 @@ test('判定: おすすめとの比較', () => {
   assert.equal(judge('raise', { action: 'check', alt: 'bet' }).mark, 'good');
   assert.equal(judge('call', { action: 'fold' }, 'preflop').text, '弱い手で参加しすぎ');
 });
+
+test('アドバイスの理由: 手の5段階評価と言葉が食い違わない', () => {
+  const base = { numPlayers: 4, toCallBB: 1, raised: false, canCheck: false };
+  const kq = preflopAdvice({ ...base, hole: parseCards('Kc Qs'), position: 'UTG' });
+  assert.equal(kq.action, 'raise');
+  assert.ok(kq.reason.includes('（まあまあ）') && !kq.reason.includes('強い手'), kq.reason);
+  const aa = preflopAdvice({ ...base, hole: parseCards('As Ah'), position: 'UTG' });
+  assert.ok(aa.reason.includes('とても強い手'), aa.reason);
+  const ak = preflopAdvice({ ...base, hole: parseCards('Ah Kc'), position: 'UTG' });
+  assert.ok(ak.reason.includes('（強い）は強い手'), ak.reason);
+});
