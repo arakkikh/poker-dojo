@@ -1,0 +1,618 @@
+// 対戦テーブル画面。エンジン(Hand)が出すイベントを順に演出しながら進行する。
+
+import { Table, STREET_NAMES } from '../core/game.js';
+import { evaluateHand, CATEGORY_NAMES } from '../core/evaluator.js';
+import { decide } from '../ai/cpu.js';
+import { handLabelJa, handTier } from '../ai/preflop.js';
+import { cardHTML, backHTML, emptyHTML } from './cards.js';
+import { sleep, fmt, escapeHTML, toast, showSheet } from './util.js';
+import { recordHand, update } from '../store/storage.js';
+
+const ME = 'you';
+
+// 席の配置（%）。0番目は常に自分（画面下）
+const SEAT_LAYOUTS = {
+  2: [
+    { x: 50, y: 80, cls: 'me' },
+    { x: 50, y: 17, cls: 'top' },
+  ],
+};
+
+const BOARD_STREET = { 0: 'preflop', 3: 'flop', 4: 'turn', 5: 'river' };
+
+class Cancelled extends Error {}
+
+export function mountTable(app, { navigate, config }) {
+  const ctrl = new TableController(app, navigate, config);
+  ctrl.run();
+  return () => ctrl.destroy();
+}
+
+function actionText(e) {
+  switch (e.action) {
+    case 'fold':
+      return 'フォールド';
+    case 'check':
+      return 'チェック';
+    case 'call':
+      return `コール ${fmt(e.to)}`;
+    case 'bet':
+      return `ベット ${fmt(e.to)}`;
+    case 'raise':
+      return `レイズ ${fmt(e.to)}`;
+    case 'allin':
+      return `オールイン ${fmt(e.to)}`;
+    default:
+      return e.action;
+  }
+}
+
+class TableController {
+  constructor(app, navigate, config) {
+    this.app = app;
+    this.navigate = navigate;
+    this.config = config;
+    this.alive = true;
+    this.pendingResolve = null;
+    this.raiseMode = false;
+    this.raiseAmount = 0;
+    this.meta = {
+      [ME]: { name: 'あなた', avatar: '🙂' },
+      ...Object.fromEntries(config.cpus.map((c) => [c.id, c])),
+    };
+
+    app.innerHTML = `
+      <div class="table-screen">
+        <header class="tbar">
+          <button class="back" aria-label="ホームへ戻る">‹</button>
+          <div class="info">
+            <span>ブラインド <b>${fmt(config.smallBlind)}/${fmt(config.bigBlind)}</b></span>
+            <span class="hand-no"></span>
+          </div>
+        </header>
+        <section class="felt">
+          <div class="oval"></div>
+          <div class="center">
+            <div class="pot"></div>
+            <div class="board"></div>
+            <div class="street-label"></div>
+          </div>
+          <div class="seats"></div>
+        </section>
+        <div class="my-info"></div>
+        <div class="actions"></div>
+      </div>`;
+    this.el = {
+      handNo: app.querySelector('.hand-no'),
+      pot: app.querySelector('.pot'),
+      board: app.querySelector('.board'),
+      street: app.querySelector('.street-label'),
+      seats: app.querySelector('.seats'),
+      myInfo: app.querySelector('.my-info'),
+      actions: app.querySelector('.actions'),
+    };
+    app.querySelector('.back').addEventListener('click', () => {
+      if (confirm('対戦をやめてホームに戻りますか？')) this.navigate('home');
+    });
+    this.el.actions.addEventListener('click', (e) => this.onActionClick(e));
+    this.el.actions.addEventListener('input', (e) => {
+      if (e.target.matches('input[type=range]')) {
+        this.raiseAmount = Number(e.target.value);
+        this.updateRaiseLabel();
+      }
+    });
+    this.newTable();
+  }
+
+  newTable() {
+    const { startingStack, smallBlind, bigBlind, cpus } = this.config;
+    this.table = new Table({
+      players: [
+        { id: ME, name: 'あなた', stack: startingStack },
+        ...cpus.map((c) => ({ id: c.id, name: c.name, stack: startingStack })),
+      ],
+      smallBlind,
+      bigBlind,
+    });
+  }
+
+  destroy() {
+    this.alive = false;
+    if (this.pendingResolve) this.pendingResolve(null);
+  }
+
+  async wait(ms) {
+    await sleep(ms);
+    if (!this.alive) throw new Cancelled();
+  }
+
+  async run() {
+    try {
+      while (this.alive) {
+        const hand = this.table.startHand();
+        if (!hand) {
+          const again = await this.gameOver();
+          if (!this.alive) return;
+          if (again) {
+            this.newTable();
+            continue;
+          }
+          this.navigate('home');
+          return;
+        }
+        await this.playHand(hand);
+      }
+    } catch (e) {
+      if (e instanceof Cancelled) return;
+      console.error(e);
+      toast('エラーが発生しました: ' + e.message, 5000);
+    }
+  }
+
+  // ---------------- 1ハンドの進行 ----------------
+
+  async playHand(hand) {
+    this.hand = hand;
+    this.cursor = 0;
+    this.shownBoard = 0;
+    this.boardAnimFrom = Infinity;
+    this.dealAnim = false;
+    this.revealed = false;
+    this.awarded = false;
+    this.showdown = null;
+    this.bubbles = {};
+    this.el.handNo.textContent = `ハンド #${this.table.handCount}`;
+    this.render();
+    await this.playEvents();
+
+    while (!hand.isComplete) {
+      const p = hand.currentPlayer;
+      let action;
+      if (p.id === ME) {
+        action = await this.askHuman();
+      } else {
+        this.render();
+        await this.wait(600 + Math.random() * 600);
+        action = decide(hand.viewFor(p.id));
+      }
+      if (!this.alive) throw new Cancelled();
+      hand.act(action);
+      await this.playEvents();
+    }
+
+    this.table.settleHand();
+    const summary = this.record();
+    await this.showResult(summary);
+  }
+
+  async playEvents() {
+    const hand = this.hand;
+    while (this.cursor < hand.events.length) {
+      const e = hand.events[this.cursor++];
+      switch (e.type) {
+        case 'blind':
+          this.bubbles[e.playerId] = { text: `${e.kind} ${fmt(e.amount)}`, cls: 'blind' };
+          break;
+        case 'deal':
+          this.dealAnim = true;
+          this.render();
+          await this.wait(500);
+          break;
+        case 'action':
+          this.bubbles[e.playerId] = { text: actionText(e), cls: e.action };
+          this.render();
+          await this.wait(e.playerId === ME ? 250 : 500);
+          break;
+        case 'reveal':
+          this.revealed = true;
+          this.render();
+          await this.wait(900);
+          break;
+        case 'street':
+          this.boardAnimFrom = this.shownBoard;
+          this.shownBoard = e.board.length;
+          this.bubbles = {};
+          this.render();
+          await this.wait(this.revealed ? 1100 : 650);
+          break;
+        case 'showdown':
+          this.revealed = true;
+          this.showdown = e;
+          this.render();
+          await this.wait(700);
+          break;
+        case 'win': {
+          this.awarded = true;
+          this.bubbles = {};
+          for (const p of hand.players) {
+            const won = this.amountWon(p);
+            if (won > 0) this.bubbles[p.id] = { text: `+${fmt(won)}`, cls: 'win' };
+          }
+          this.render();
+          await this.wait(900);
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    this.render();
+  }
+
+  /** このハンドでポットから受け取った額 */
+  amountWon(p) {
+    return p.stack - (p.startStack - p.totalBet);
+  }
+
+  // ---------------- 描画 ----------------
+
+  render() {
+    const hand = this.hand;
+    if (!hand) return;
+    const layout = SEAT_LAYOUTS[this.table.players.length];
+
+    // ボードとポット
+    const board = hand.board.slice(0, this.shownBoard);
+    const best = this.winningCards();
+    let boardHTML = '';
+    for (let i = 0; i < 5; i++) {
+      if (i < board.length) {
+        const cls = [i >= this.boardAnimFrom ? 'deal-in' : '', best.has(board[i]) ? 'highlight' : ''].join(' ');
+        boardHTML += cardHTML(board[i], cls);
+      } else boardHTML += emptyHTML();
+    }
+    this.el.board.innerHTML = boardHTML;
+    this.boardAnimFrom = Infinity;
+
+    const betsOnTable = hand.players.reduce((s, p) => s + p.bet, 0);
+    const pot = this.awarded ? 0 : hand.pot - betsOnTable;
+    this.el.pot.innerHTML = pot > 0 ? `<span class="chip-icon">●</span> ポット ${fmt(pot)}` : '';
+    this.el.street.textContent = this.showdown ? 'ショーダウン' : STREET_NAMES[BOARD_STREET[this.shownBoard]];
+
+    // 席（テーブルの席順で、自分を0番に）
+    this.el.seats.innerHTML = this.table.players
+      .map((tp, seat) => {
+        const p = hand.playerById(tp.id);
+        return this.seatHTML(tp, p, layout[seat], best);
+      })
+      .join('');
+    this.dealAnim = false;
+
+    this.renderMyInfo();
+    if (!this.isHumanTurn()) this.renderWaiting();
+  }
+
+  seatHTML(tp, p, pos, best) {
+    const hand = this.hand;
+    const meta = this.meta[tp.id];
+    const isMe = tp.id === ME;
+    const style = `left:${pos.x}%;top:${pos.y}%`;
+    if (!p) {
+      return `<div class="seat ${pos.cls} folded" style="${style}"><div class="seat-cards"></div>
+        <div class="seat-plate"><span class="name">${meta.avatar} ${escapeHTML(meta.name)}</span><span class="stack">0</span></div></div>`;
+    }
+    const active = !hand.isComplete && hand.currentPlayer && hand.currentPlayer.id === p.id;
+    const faceUp = isMe || (this.revealed && !p.folded);
+    const anim = this.dealAnim ? 'deal-in' : '';
+    const cards = p.hole
+      .map((c) => (faceUp ? cardHTML(c, [anim, best.has(c) ? 'highlight' : ''].join(' ')) : backHTML(anim)))
+      .join('');
+
+    const idx = hand.players.indexOf(p);
+    let badge = '';
+    if (idx === hand.buttonIndex) {
+      badge = `<span class="pos-badge dealer">${hand.n === 2 ? 'D・SB' : 'D'}</span>`;
+    }
+    else if (idx === hand.bbIndex) badge = '<span class="pos-badge">BB</span>';
+    else if (idx === hand.sbIndex) badge = '<span class="pos-badge">SB</span>';
+
+    const stack = this.awarded ? p.stack : p.startStack - p.totalBet;
+    const bubble = this.bubbles[p.id];
+    const sd = this.showdown && this.showdown.hands.find((x) => x.playerId === p.id);
+    const nameLine = sd ? `<span class="hand-name">${sd.eval.description}</span>` : '';
+    const betChip = p.bet > 0 && !this.awarded ? `<span class="bet-chip">${fmt(p.bet)}</span>` : '';
+
+    return `
+      <div class="seat ${pos.cls} ${isMe ? 'me' : ''} ${active ? 'active' : ''} ${p.folded ? 'folded' : ''}" style="${style}">
+        ${bubble ? `<div class="bubble ${bubble.cls}">${bubble.text}</div>` : ''}
+        <div class="seat-cards">${cards}</div>
+        ${nameLine}
+        <div class="seat-plate">
+          ${badge}
+          <span class="name">${meta.avatar} ${escapeHTML(meta.name)}</span>
+          ${meta.style ? `<span class="style">${escapeHTML(meta.style)}</span>` : ''}
+          <span class="stack">${fmt(stack)}</span>
+        </div>
+        ${betChip}
+      </div>`;
+  }
+
+  /** ショーダウンで勝った人の役を構成するカード */
+  winningCards() {
+    const set = new Set();
+    if (!this.showdown || !this.awarded) return set;
+    const winners = new Set(this.hand.results.pots.flatMap((pot) => pot.winners));
+    for (const h of this.showdown.hands) {
+      if (winners.has(h.playerId)) h.eval.best.forEach((c) => set.add(c));
+    }
+    return set;
+  }
+
+  renderMyInfo() {
+    const me = this.hand.playerById(ME);
+    if (!me) {
+      this.el.myInfo.innerHTML = '';
+      return;
+    }
+    if (me.folded) {
+      this.el.myInfo.innerHTML = 'フォールドしました';
+      return;
+    }
+    if (this.shownBoard === 0) {
+      const t = handTier(me.hole[0], me.hole[1]);
+      this.el.myInfo.innerHTML = `あなたの手 <b>${handLabelJa(me.hole[0], me.hole[1])}</b>
+        <span class="tier t${t.tier}">${t.label}</span>`;
+    } else {
+      const ev = evaluateHand([...me.hole, ...this.hand.board.slice(0, this.shownBoard)]);
+      this.el.myInfo.innerHTML = `現在の役 <b>${ev.description}</b>`;
+    }
+  }
+
+  isHumanTurn() {
+    return !!this.pendingResolve;
+  }
+
+  renderWaiting() {
+    const hand = this.hand;
+    const p = hand.currentPlayer;
+    if (p && p.id !== ME) {
+      this.el.actions.innerHTML = `<div class="waiting">${this.meta[p.id].avatar} ${escapeHTML(this.meta[p.id].name)}が考え中<span class="dots"></span></div>`;
+    } else {
+      this.el.actions.innerHTML = `<div class="waiting">&nbsp;</div>`;
+    }
+  }
+
+  // ---------------- 自分の操作 ----------------
+
+  askHuman() {
+    return new Promise((resolve) => {
+      this.pendingResolve = (action) => {
+        this.pendingResolve = null;
+        this.raiseMode = false;
+        resolve(action);
+      };
+      this.render();
+      this.renderActionBar();
+    });
+  }
+
+  renderActionBar() {
+    const legal = this.hand.legalActions();
+    if (this.raiseMode) {
+      this.renderRaisePanel(legal);
+      return;
+    }
+    const callLabel = legal.canCheck
+      ? 'チェック'
+      : legal.toCall >= legal.stack
+        ? `オールイン<small>${fmt(legal.toCall)} でコール</small>`
+        : `コール<small>${fmt(legal.toCall)}</small>`;
+    const raiseWord = legal.isBet ? 'ベット' : 'レイズ';
+    const raiseLabel = legal.canRaise
+      ? `${raiseWord}<small>${fmt(legal.minRaiseTo)}〜</small>`
+      : `${raiseWord}<small>できません</small>`;
+    this.el.actions.innerHTML = `
+      <div class="action-row">
+        <button class="btn act-fold" data-act="fold" ${legal.canCheck ? 'disabled' : ''}>フォールド${legal.canCheck ? '<small>不要</small>' : ''}</button>
+        <button class="btn act-call" data-act="${legal.canCheck ? 'check' : 'call'}">${callLabel}</button>
+        <button class="btn act-raise" data-act="raise-open" ${legal.canRaise ? '' : 'disabled'}>${raiseLabel}</button>
+      </div>`;
+  }
+
+  /** プリセット額（ポットの割合）を計算 */
+  presetAmount(legal, kind) {
+    if (kind === 'min') return legal.minRaiseTo;
+    if (kind === 'max') return legal.maxRaiseTo;
+    const f = kind === 'half' ? 0.5 : 1;
+    const raw = legal.currentBet + f * (legal.pot + legal.toCall);
+    const step = this.hand.smallBlind;
+    return Math.max(legal.minRaiseTo, Math.min(legal.maxRaiseTo, Math.round(raw / step) * step));
+  }
+
+  renderRaisePanel(legal) {
+    const step = this.hand.smallBlind;
+    this.el.actions.innerHTML = `
+      <div class="raise-panel">
+        <div class="raise-amount"></div>
+        <div class="presets">
+          <button data-preset="min">最小</button>
+          <button data-preset="half">½ポット</button>
+          <button data-preset="pot">ポット</button>
+          <button data-preset="max">オールイン</button>
+        </div>
+        <div class="slider-row">
+          <button data-act="minus" aria-label="減らす">−</button>
+          <input type="range" min="${legal.minRaiseTo}" max="${legal.maxRaiseTo}" step="${step}" value="${this.raiseAmount}">
+          <button data-act="plus" aria-label="増やす">＋</button>
+        </div>
+        <div class="action-row two">
+          <button class="btn" data-act="raise-cancel">戻る</button>
+          <button class="btn act-raise" data-act="raise-confirm"></button>
+        </div>
+      </div>`;
+    this.updateRaiseLabel();
+  }
+
+  updateRaiseLabel() {
+    const legal = this.hand.legalActions();
+    const amt = this.raiseAmount;
+    const allin = amt >= legal.maxRaiseTo;
+    const word = allin ? 'オールイン' : legal.isBet ? 'ベット' : 'レイズ';
+    const label = this.el.actions.querySelector('.raise-amount');
+    if (label) {
+      const me = this.hand.currentPlayer;
+      label.innerHTML = legal.isBet
+        ? `ベット額 <b>${fmt(amt)}</b>（ポット ${fmt(legal.pot)}）`
+        : `合計 <b>${fmt(amt)}</b> にレイズ（あと ${fmt(amt - me.bet)} 出す）`;
+    }
+    const btn = this.el.actions.querySelector('[data-act="raise-confirm"]');
+    if (btn) btn.innerHTML = `${word} ${fmt(amt)}`;
+    const slider = this.el.actions.querySelector('input[type=range]');
+    if (slider && Number(slider.value) !== amt) slider.value = amt;
+  }
+
+  onActionClick(e) {
+    if (!this.pendingResolve) return;
+    const legal = this.hand.legalActions();
+    const preset = e.target.closest('[data-preset]');
+    if (preset) {
+      this.raiseAmount = this.presetAmount(legal, preset.dataset.preset);
+      this.updateRaiseLabel();
+      return;
+    }
+    const btn = e.target.closest('[data-act]');
+    if (!btn || btn.disabled) return;
+    switch (btn.dataset.act) {
+      case 'fold':
+        this.pendingResolve({ type: 'fold' });
+        break;
+      case 'check':
+        this.pendingResolve({ type: 'check' });
+        break;
+      case 'call':
+        this.pendingResolve({ type: 'call' });
+        break;
+      case 'raise-open':
+        this.raiseMode = true;
+        this.raiseAmount = legal.isBet ? this.presetAmount(legal, 'half') : legal.minRaiseTo;
+        this.renderActionBar();
+        break;
+      case 'raise-cancel':
+        this.raiseMode = false;
+        this.renderActionBar();
+        break;
+      case 'minus':
+      case 'plus': {
+        const d = (btn.dataset.act === 'plus' ? 1 : -1) * this.hand.bigBlind;
+        this.raiseAmount = Math.max(legal.minRaiseTo, Math.min(legal.maxRaiseTo, this.raiseAmount + d));
+        this.updateRaiseLabel();
+        break;
+      }
+      case 'raise-confirm': {
+        const amt = this.raiseAmount;
+        this.pendingResolve(amt >= legal.maxRaiseTo ? { type: 'allin' } : { type: 'raise', amount: amt });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // ---------------- 結果と記録 ----------------
+
+  record() {
+    const hand = this.hand;
+    const me = hand.playerById(ME);
+    if (!me) return null;
+    const net = hand.results.net[ME];
+    const won = this.amountWon(me);
+    const pre = hand.events.filter((e) => e.type === 'action' && e.playerId === ME && e.street === 'preflop');
+    const showdownHand = this.showdown && this.showdown.hands.find((h) => h.playerId === ME);
+    const category = !me.folded && hand.board.length === 5 ? evaluateHand([...me.hole, ...hand.board]).category : null;
+    const { newCategory } = recordHand({
+      net,
+      won: won > 0,
+      vpip: pre.some((e) => ['call', 'bet', 'raise', 'allin'].includes(e.action)),
+      pfr: pre.some((e) => ['bet', 'raise'].includes(e.action) || (e.action === 'allin' && e.to > hand.bigBlind)),
+      showdown: !!showdownHand,
+      showdownWon: !!showdownHand && won > 0,
+      potWon: won,
+      category,
+    });
+    if (newCategory != null) toast(`📖 図鑑に「${CATEGORY_NAMES[newCategory]}」が登録されました！`, 3000);
+    return { net, won, me };
+  }
+
+  async showResult(summary) {
+    if (!summary) return;
+    const hand = this.hand;
+    const { net, won, me } = summary;
+    const winners = hand.results.pots.flatMap((p) => p.winners);
+    const split = won > 0 && winners.some((id) => id !== ME) && winners.includes(ME);
+
+    let title;
+    let cls;
+    let sub;
+    if (me.folded) {
+      title = 'フォールド';
+      cls = 'lose';
+      sub = net < 0 ? `${fmt(-net)} チップを失いました` : 'チップは減っていません';
+    } else if (hand.results.uncontested) {
+      title = '勝ち！';
+      cls = 'win';
+      const other = hand.players.find((p) => p.id !== ME);
+      sub = `${escapeHTML(this.meta[other.id].name)}がフォールドしました（${net >= 0 ? '+' : ''}${fmt(net)}）`;
+    } else if (split) {
+      title = '引き分け';
+      cls = '';
+      sub = `同じ強さの役でポットを分けました（${net >= 0 ? '+' : ''}${fmt(net)}）`;
+    } else if (won > 0) {
+      title = '勝ち！';
+      cls = 'win';
+      sub = `${hand.results.pots[0].description}で勝利（+${fmt(net)}）`;
+    } else {
+      title = '負け…';
+      cls = 'lose';
+      const pot = hand.results.pots[0];
+      sub = `相手の${pot.description}に負けました（${fmt(net)}）`;
+    }
+
+    // 同じ役同士ならキッカー（役以外のカード）で決着したことを伝える
+    if (this.showdown && !split && this.showdown.hands.length === 2) {
+      const [a, b] = this.showdown.hands.map((h) => h.eval);
+      if (a.category === b.category) sub += '<br>同じ役なので、残りのカード（キッカー）の強さで決着しました';
+    }
+
+    let hands = '';
+    if (this.showdown) {
+      hands = `<div class="result-hands">${this.showdown.hands
+        .map((h) => {
+          const m = this.meta[h.playerId];
+          return `<div class="result-hand ${winners.includes(h.playerId) ? 'winner' : ''}">
+            <div class="who">${m.avatar} ${escapeHTML(m.name)}</div>
+            <div class="desc">${h.eval.description}</div>
+            <div class="cards">${h.eval.best.map((c) => cardHTML(c)).join('')}</div>
+          </div>`;
+        })
+        .join('')}</div>`;
+    }
+
+    await showSheet(
+      `<p class="result-title ${cls}">${title}</p>
+       <p class="result-sub">${sub}</p>
+       ${hands}
+       <button class="btn btn-primary" data-value="next">次のハンドへ</button>`,
+      { container: this.app },
+    );
+    if (!this.alive) throw new Cancelled();
+  }
+
+  async gameOver() {
+    const me = this.table.players.find((p) => p.id === ME);
+    const iWon = me.stack > 0;
+    if (iWon) update((d) => d.stats.matchesWon++);
+    const v = await showSheet(
+      iWon
+        ? `<p class="result-title win">🎉 完全勝利！</p>
+           <p class="result-sub">相手のチップをすべて獲得しました（${this.table.handCount}ハンド）</p>
+           <button class="btn btn-primary" data-value="again">もう一度対戦</button>
+           <button class="btn" data-value="home">ホームへ</button>`
+        : `<p class="result-title lose">チップがなくなりました</p>
+           <p class="result-sub">次はきっと勝てる！チップを補充してもう一度挑戦できます</p>
+           <button class="btn btn-primary" data-value="again">チップを補充して再挑戦</button>
+           <button class="btn" data-value="home">ホームへ</button>`,
+      { container: this.app },
+    );
+    return v === 'again';
+  }
+}

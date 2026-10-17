@@ -1,0 +1,505 @@
+/* ---------- 対戦テーブル画面 ---------- */
+.table-screen {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--felt-dark);
+  overflow: hidden;
+}
+
+.tbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: calc(var(--safe-top) + 6px) 10px 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.tbar .back {
+  width: 40px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 20px;
+}
+
+.tbar .info {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tbar b {
+  color: var(--text);
+}
+
+/* テーブル（楕円） */
+.felt {
+  position: relative;
+  flex: 1;
+  min-height: 300px;
+}
+
+.oval {
+  position: absolute;
+  inset: 12% 4% 16%;
+  border-radius: 46% / 32%;
+  background: radial-gradient(ellipse at center, var(--felt-light) 0%, var(--felt) 55%, #0f5536 100%);
+  border: 10px solid var(--rail);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.45), 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.center {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.pot {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 4px 14px;
+  border-radius: 99px;
+  font-size: 14px;
+  font-weight: 700;
+  min-height: 26px;
+}
+
+.pot:empty {
+  visibility: hidden;
+}
+
+.pot .chip-icon {
+  color: var(--gold);
+}
+
+.board {
+  display: flex;
+  gap: 5px;
+  --card-w: min(14.5vw, 60px);
+}
+
+.street-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 16px;
+}
+
+/* 席 */
+.seat {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 132px;
+  transition: opacity 0.2s;
+}
+
+.seat.folded .seat-cards {
+  opacity: 0.3;
+}
+
+.seat.folded .seat-plate {
+  opacity: 0.55;
+}
+
+.seat-cards {
+  display: flex;
+  gap: 3px;
+  --card-w: 40px;
+  min-height: 56px;
+}
+
+.seat.me .seat-cards {
+  --card-w: min(17vw, 70px);
+  min-height: calc(min(17vw, 70px) * 1.4);
+}
+
+.seat-plate {
+  position: relative;
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 4px 10px;
+  text-align: center;
+  min-width: 110px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.seat.active .seat-plate {
+  border-color: var(--gold);
+  box-shadow: 0 0 12px rgba(242, 193, 78, 0.7);
+}
+
+.seat-plate .name {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seat-plate .style {
+  display: block;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.seat-plate .stack {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pos-badge {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
+  white-space: nowrap;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  background: #e5e7eb;
+  color: #111;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.pos-badge.dealer {
+  background: #fff;
+  border: 2px solid #111;
+}
+
+.bubble {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  color: #111;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+  animation: pop 0.2s ease-out;
+  z-index: 3;
+}
+
+.bubble.fold {
+  background: #9ca3af;
+}
+
+.bubble.raise,
+.bubble.bet,
+.bubble.allin {
+  background: var(--gold);
+}
+
+.bubble.win {
+  background: var(--win);
+}
+
+.seat.me .bubble {
+  top: auto;
+  bottom: -22px;
+}
+
+@keyframes pop {
+  from {
+    transform: translateX(-50%) scale(0.6);
+    opacity: 0;
+  }
+}
+
+.bet-chip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 8px 2px 4px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.bet-chip::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: -1px;
+  background: var(--gold);
+  border: 2px dashed #fff;
+}
+
+.seat.top .bet-chip {
+  bottom: -26px;
+}
+
+.seat.me .bet-chip {
+  top: -28px;
+}
+
+.hand-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 8px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+/* 自分の情報欄 */
+.my-info {
+  min-height: 36px;
+  padding: 4px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.my-info b {
+  color: var(--gold);
+}
+
+.tier {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.tier.t1 {
+  background: #b45309;
+  color: #fff;
+}
+
+.tier.t2 {
+  background: #047857;
+  color: #fff;
+}
+
+/* アクションバー */
+.actions {
+  background: rgba(0, 0, 0, 0.45);
+  padding: 10px 10px calc(var(--safe-bottom) + 10px);
+  min-height: 136px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.action-row.two {
+  grid-template-columns: 1fr 2fr;
+}
+
+.action-row .btn {
+  min-height: 56px;
+  padding: 6px 4px;
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.action-row .btn small {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.act-fold {
+  background: var(--btn-fold);
+}
+
+.act-call {
+  background: var(--btn-call);
+}
+
+.act-raise {
+  background: var(--btn-raise);
+}
+
+.waiting {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14px;
+  padding: 18px 0;
+}
+
+.waiting .dots::after {
+  content: '';
+  animation: dots 1.2s steps(4) infinite;
+}
+
+@keyframes dots {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75% {
+    content: '...';
+  }
+}
+
+/* レイズ額パネル */
+.raise-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.raise-amount {
+  text-align: center;
+  font-size: 15px;
+}
+
+.raise-amount b {
+  font-size: 22px;
+  color: var(--gold);
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.presets button {
+  min-height: 38px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-row button {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 22px;
+  flex: none;
+}
+
+.slider-row input[type='range'] {
+  flex: 1;
+  height: 44px;
+  accent-color: var(--gold);
+}
+
+/* ハンド結果シート */
+.result-title {
+  text-align: center;
+  font-size: 24px;
+  font-weight: 800;
+  margin: 0 0 4px;
+}
+
+.result-title.win {
+  color: var(--win);
+}
+
+.result-title.lose {
+  color: var(--lose);
+}
+
+.result-sub {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14px;
+  margin: 0 0 14px;
+}
+
+.result-hands {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.result-hand {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.result-hand .who {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.result-hand .cards {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  --card-w: 42px;
+}
+
+.result-hand .desc {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.result-hand.winner {
+  box-shadow: inset 0 0 0 2px var(--win);
+}
+
+.sheet .btn {
+  width: 100%;
+}
+
+.sheet .btn + .btn {
+  margin-top: 8px;
+}

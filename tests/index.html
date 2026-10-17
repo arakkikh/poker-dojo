@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ポーカー道場 テスト</title>
+  <style>
+    body { font: 13px/1.5 ui-monospace, Menlo, monospace; margin: 16px; background: #111; color: #ddd; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <pre id="out">実行中…</pre>
+  <script>
+    const out = document.getElementById('out');
+    out.textContent = '';
+    window.__testLog = (s) => { out.textContent += s + '\n'; };
+  </script>
+  <script type="module" src="./run.js"></script>
+</body>
+</html>
